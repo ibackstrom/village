@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Village CSV Pipeline — Houdini and Unreal PCG</title>
+  <style>
+    :root { color-scheme: light; --ink: #241f19; --muted: #6f675d; --paper: #f5f0e6; --panel: #fffaf0; --line: #cfc4b2; --accent: #8b3f2f; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.55 system-ui, sans-serif; }
+    main { width: min(1040px, calc(100% - 32px)); margin: 40px auto 80px; }
+    h1, h2, h3 { line-height: 1.15; }
+    h1 { font-size: clamp(2rem, 5vw, 3.6rem); margin-bottom: .3em; }
+    h2 { border-top: 1px solid var(--line); margin-top: 48px; padding-top: 28px; }
+    a { color: var(--accent); }
+    .lead { color: var(--muted); font-size: 1.15rem; max-width: 760px; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 20px; margin: 18px 0; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    code { background: #e9e1d4; padding: .1em .3em; border-radius: 3px; }
+    pre { overflow: auto; background: #211e1a; color: #f6efe4; padding: 18px; border-radius: 6px; font-size: 13px; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; min-width: 680px; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); padding: 9px 7px; }
+    th { background: #e9e1d4; }
+    .note { border-left: 4px solid var(--accent); padding: 10px 14px; background: #eee4d5; }
+    ol li, ul li { margin: .45em 0; }
+  </style>
+</head>
+<body>
+<main>
+  <p><a href="./">← Back to the village generator</a></p>
+  <h1>Village CSV pipeline</h1>
+  <p class="lead">The CSV is a point-instancing contract for rebuilding the generated village with proxy or production assets in Houdini and Unreal Engine PCG.</p>
+
+  <div class="card">
+    <h3>Export</h3>
+    <ol>
+      <li>Generate the village and choose the required building quantity.</li>
+      <li>Open <strong>Menu → Export Houdini/Unreal CSV</strong>.</li>
+      <li>The downloaded file contains buildings, individual wall segments, primary road segments, and internal street segments.</li>
+    </ol>
+  </div>
+
+  <h2>Coordinate and geometry contract</h2>
+  <div class="grid">
+    <div class="card"><strong>Axes</strong><br>Right-handed, Z-up. The map becomes the XY ground plane. Screen Y is flipped during export, so rotations remain consistent in 3D.</div>
+    <div class="card"><strong>Units</strong><br>One CSV unit should be treated as one metre. For Unreal, multiply position and dimensions by 100 when working directly in centimetres.</div>
+    <div class="card"><strong>Pivot</strong><br>Every row is a center point. Proxy geometry should be centered in X/Y, rest on Z=0, and point along local +X.</div>
+    <div class="card"><strong>Rotation</strong><br><code>RotationYaw</code> is degrees around +Z. Pitch and roll are currently zero.</div>
+  </div>
+
+  <h2>CSV schema</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Column</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>Name</code></td><td>Unique row ID; also satisfies Unreal Data Table's required first column.</td></tr>
+        <tr><td><code>ElementType</code></td><td><code>building</code>, <code>wall</code>, or <code>road</code>.</td></tr>
+        <tr><td><code>BuildingName</code></td><td>Building class shown by map hover. Empty for roads and walls.</td></tr>
+        <tr><td><code>AssetName</code></td><td>Stable lookup key such as <code>building_cottage</code>, <code>wall_city</code>, <code>road_primary</code>, or <code>road_internal</code>.</td></tr>
+        <tr><td><code>PositionX/Y/Z</code></td><td>World-space point position in metres.</td></tr>
+        <tr><td><code>RotationPitch/Yaw/Roll</code></td><td>Euler rotation in degrees.</td></tr>
+        <tr><td><code>SizeX/Y/Z</code></td><td>Proxy dimensions. Building Z values are useful default heights; replace them with production asset dimensions as needed.</td></tr>
+        <tr><td><code>SegmentLength</code></td><td>Wall or road segment length. Zero for buildings.</td></tr>
+        <tr><td><code>SegmentWidth</code></td><td>Wall thickness or road width. Zero for buildings.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">Roads and walls are exported as midpoint-oriented segments rather than a single curve. This makes the same CSV directly usable for box proxies, instanced modular pieces, or conversion back into connected curves.</p>
+
+  <h2>Houdini SOP workflow</h2>
+  <ol>
+    <li>Save the CSV as <code>$HIP/village.csv</code>.</li>
+    <li>Create a Geometry object and add a Python SOP.</li>
+    <li>Paste the importer below. It creates points plus typed attributes.</li>
+    <li>Add an Attribute Wrangle to create <code>orient</code> and <code>scale</code>.</li>
+    <li>Split by <code>s@element_type</code> or <code>s@asset_name</code>, then use Copy to Points, an asset library, or an HDA.</li>
+  </ol>
+
+  <h3>Python SOP importer</h3>
+  <pre>import csv
+import hou
+
+geo = hou.pwd().geometry()
+geo.clear()
+csv_path = hou.expandString("$HIP/village.csv")
+
+string_attrs = {
+    "name": "Name",
+    "element_type": "ElementType",
+    "building_name": "BuildingName",
+    "asset_name": "AssetName",
+}
+float_attrs = {
+    "rotation_pitch": "RotationPitch",
+    "rotation_yaw": "RotationYaw",
+    "rotation_roll": "RotationRoll",
+    "size_x": "SizeX", "size_y": "SizeY", "size_z": "SizeZ",
+    "segment_length": "SegmentLength",
+    "segment_width": "SegmentWidth",
+}
+
+for attr in string_attrs:
+    geo.addAttrib(hou.attribType.Point, attr, "")
+for attr in float_attrs:
+    geo.addAttrib(hou.attribType.Point, attr, 0.0)
+
+with open(csv_path, newline="", encoding="utf-8-sig") as stream:
+    for row in csv.DictReader(stream):
+        point = geo.createPoint()
+        point.setPosition((float(row["PositionX"]),
+                           float(row["PositionY"]),
+                           float(row["PositionZ"])))
+        for attr, column in string_attrs.items():
+            point.setAttribValue(attr, row[column])
+        for attr, column in float_attrs.items():
+            point.setAttribValue(attr, float(row[column]))</pre>
+
+  <h3>Point transform wrangle</h3>
+  <pre>float yaw = radians(f@rotation_yaw);
+p@orient = quaternion(yaw, {0, 0, 1});
+v@scale = set(f@size_x, f@size_y, f@size_z);</pre>
+
+  <h3>Proxy reconstruction</h3>
+  <ul>
+    <li>Create a unit Box with XY bounds −0.5 to 0.5 and Z bounds 0 to 1, then Copy to Points using <code>orient</code> and <code>scale</code>.</li>
+    <li>For production buildings, map <code>asset_name</code> to packed primitives. Preserve the CSV size as a footprint check rather than automatically stretching final art.</li>
+    <li>For roads and walls, the unit box produces immediate segment proxies. For continuous geometry, sort/group points by <code>asset_name</code>, derive endpoints from length and yaw, fuse matching endpoints, and build polylines before sweeping a profile.</li>
+  </ul>
+
+  <h2>Unreal Engine PCG workflow</h2>
+  <ol>
+    <li>Create a Blueprint/C++ row struct matching the fields below and deriving from <code>FTableRowBase</code>.</li>
+    <li>Import the CSV as a Data Table using that row struct. <code>Name</code> is consumed as the row key.</li>
+    <li>Use an Editor Utility Blueprint or a small PCG data-source actor to iterate the Data Table and emit one PCG point per row.</li>
+    <li>Convert metres to centimetres: position and size × 100.</li>
+    <li>Write <code>ElementType</code>, <code>BuildingName</code>, and <code>AssetName</code> into PCG metadata.</li>
+    <li>Branch by <code>ElementType</code>. Use Mesh Selector By Attribute with <code>AssetName</code> for buildings; use oriented box meshes or spline reconstruction for roads and walls.</li>
+  </ol>
+
+  <h3>Unreal Data Table row</h3>
+  <pre>USTRUCT(BlueprintType)
+struct FVillagePointRow : public FTableRowBase
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly) FString ElementType;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly) FString BuildingName;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly) FString AssetName;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly) float PositionX = 0;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly) float PositionY = 0;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly) float PositionZ = 0;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly) float RotationPitch = 0;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly) float RotationYaw = 0;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly) float RotationRoll = 0;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly) float SizeX = 0;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly) float SizeY = 0;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly) float SizeZ = 0;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly) float SegmentLength = 0;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly) float SegmentWidth = 0;
+};</pre>
+
+  <h3>PCG point conversion</h3>
+  <p>For each row, set the point transform to:</p>
+  <pre>Location = FVector(PositionX, PositionY, PositionZ) * 100.0f;
+Rotation = FRotator(RotationPitch, RotationYaw, RotationRoll);
+DesiredWorldSizeCm = FVector(SizeX, SizeY, SizeZ) * 100.0f;
+Scale3D = DesiredWorldSizeCm / SourceMeshBoundsCm;</pre>
+  <p>For Static Mesh Spawner assets, use the dimensionless <code>Scale3D</code> ratio as point scale. Do not use centimetre dimensions directly as Unreal scale.</p>
+
+  <div class="card">
+    <h3>Recommended production setup</h3>
+    <ul>
+      <li><strong>Buildings:</strong> map each <code>AssetName</code> to one or more weighted meshes; use the CSV transform as placement and footprint validation.</li>
+      <li><strong>Walls:</strong> use modular wall pieces aligned on local +X, or merge connected segments into splines and use a spline mesh.</li>
+      <li><strong>Roads:</strong> convert connected segment endpoints to splines for terrain projection, grading, and spline-mesh generation.</li>
+      <li><strong>Iteration:</strong> keep <code>Name</code> as the stable source key so regenerated data can update rather than duplicate existing proxies.</li>
+    </ul>
+  </div>
+</main>
+</body>
+</html>

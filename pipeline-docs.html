@@ -52,10 +52,10 @@
 
   <h2>Coordinate and geometry contract</h2>
   <div class="grid">
-    <div class="card"><strong>Axes</strong><br>Right-handed, Z-up. The map becomes the XY ground plane. Screen Y is flipped during export, so rotations remain consistent in 3D.</div>
-    <div class="card"><strong>Units</strong><br>One CSV unit should be treated as one metre. For Unreal, multiply position and dimensions by 100 when working directly in centimetres.</div>
-    <div class="card"><strong>Pivot</strong><br>Every row is a center point. Proxy geometry should be centered in X/Y, rest on Z=0, and point along local +X.</div>
-    <div class="card"><strong>Rotation</strong><br><code>RotationYaw</code> is degrees around +Z. Pitch and roll are currently zero.</div>
+    <div class="card"><strong>Axes</strong><br>The CSV is right-handed and Z-up on an XY ground plane. The Houdini importer below converts it to a Y-up XZ ground plane.</div>
+    <div class="card"><strong>Units</strong><br>One CSV unit is one metre. The Houdini importer multiplies all positions and dimensions by 100 for a centimetre scene; Unreal does the same conversion.</div>
+    <div class="card"><strong>Pivot</strong><br>Every row is a center point. In Houdini, source geometry is centered in X/Z, rests on Y=0, and points along local +X.</div>
+    <div class="card"><strong>Rotation</strong><br><code>RotationYaw</code> is around CSV +Z. The Houdini wrangle converts it to rotation around +Y. Pitch and roll are currently zero.</div>
   </div>
 
   <h2>CSV schema</h2>
@@ -79,20 +79,41 @@
 
   <h2>Houdini SOP workflow</h2>
   <ol>
-    <li>Save the CSV as <code>$HIP/village.csv</code>.</li>
     <li>Create a Geometry object and add a Python SOP.</li>
-    <li>Paste the importer below. It creates points plus typed attributes.</li>
+    <li>On the Python SOP, open <strong>Edit Parameter Interface</strong>. Add a <strong>File</strong> parameter named <code>csv_file</code>, label it <strong>CSV File</strong>, and set its default to <code>$HIP/village.csv</code>.</li>
+    <li>Use the new file chooser to select any exported CSV.</li>
+    <li>Paste the importer below. It creates Y-up points and typed attributes at ×100 scale.</li>
     <li>Add an Attribute Wrangle to create <code>orient</code>. Standard buildings stay at scale 1; only segment proxies and adaptive landmarks use the exported size.</li>
     <li>Split by <code>s@element_type</code> or <code>s@asset_name</code>, then use Copy to Points, an asset library, or an HDA.</li>
   </ol>
+
+  <h3>Add the CSV spare parameter</h3>
+  <p>You can add the parameter through the interface above, or select the Python SOP and run this once in a Python Shell:</p>
+  <pre>import hou
+
+node = hou.selectedNodes()[0]
+group = node.parmTemplateGroup()
+csv_parm = hou.StringParmTemplate(
+    "csv_file", "CSV File", 1,
+    default_value=("$HIP/village.csv",),
+    string_type=hou.stringParmType.FileReference,
+    file_type=hou.fileType.Any,
+)
+group.append(csv_parm)
+node.setParmTemplateGroup(group)</pre>
 
   <h3>Python SOP importer</h3>
   <pre>import csv
 import hou
 
-geo = hou.pwd().geometry()
+node = hou.pwd()
+geo = node.geometry()
 geo.clear()
-csv_path = hou.expandString("$HIP/village.csv")
+csv_path = node.evalParm("csv_file")
+unit_scale = 100.0
+
+if not csv_path:
+    raise hou.NodeError("Choose a CSV file in the CSV File parameter.")
 
 string_attrs = {
     "name": "Name",
@@ -100,10 +121,12 @@ string_attrs = {
     "building_name": "BuildingName",
     "asset_name": "AssetName",
 }
-float_attrs = {
+rotation_attrs = {
     "rotation_pitch": "RotationPitch",
     "rotation_yaw": "RotationYaw",
     "rotation_roll": "RotationRoll",
+}
+linear_attrs = {
     "size_x": "SizeX", "size_y": "SizeY", "size_z": "SizeZ",
     "segment_length": "SegmentLength",
     "segment_width": "SegmentWidth",
@@ -111,35 +134,45 @@ float_attrs = {
 
 for attr in string_attrs:
     geo.addAttrib(hou.attribType.Point, attr, "")
-for attr in float_attrs:
+for attr in list(rotation_attrs) + list(linear_attrs):
     geo.addAttrib(hou.attribType.Point, attr, 0.0)
 
 with open(csv_path, newline="", encoding="utf-8-sig") as stream:
     for row in csv.DictReader(stream):
         point = geo.createPoint()
-        point.setPosition((float(row["PositionX"]),
-                           float(row["PositionY"]),
-                           float(row["PositionZ"])))
+        csv_x = float(row["PositionX"])
+        csv_y = float(row["PositionY"])
+        csv_z = float(row["PositionZ"])
+
+        # CSV Z-up metres -> Houdini Y-up centimetres.
+        point.setPosition((csv_x * unit_scale,
+                           csv_z * unit_scale,
+                          -csv_y * unit_scale))
+
         for attr, column in string_attrs.items():
             point.setAttribValue(attr, row[column])
-        for attr, column in float_attrs.items():
-            point.setAttribValue(attr, float(row[column]))</pre>
+
+        for attr, column in rotation_attrs.items():
+            point.setAttribValue(attr, float(row[column]))
+        for attr, column in linear_attrs.items():
+            point.setAttribValue(attr, float(row[column]) * unit_scale)</pre>
 
   <h3>Point transform wrangle</h3>
   <pre>float yaw = radians(f@rotation_yaw);
-p@orient = quaternion(yaw, {0, 0, 1});
+p@orient = quaternion(yaw, {0, 1, 0});
 if (s@element_type == "building" &amp;&amp;
     s@building_name != "Market" &amp;&amp;
     s@building_name != "Church" &amp;&amp;
     s@building_name != "Castle") {
     v@scale = {1, 1, 1};
 } else {
-    v@scale = set(f@size_x, f@size_y, f@size_z);
+    // CSV X/Y/Z dimensions become Houdini X/Z/Y.
+    v@scale = set(f@size_x, f@size_z, f@size_y);
 }
 s@name = s@asset_name;</pre>
 
   <h3>Exact proxy sizes and names</h3>
-  <p>Model each standard building at the exact dimensions below in metres. The generator reserves that exact footprint, so Copy to Points applies only position and rotation—<strong>never scale these eight building assets</strong>. Put every pivot at bottom center, keep the floor at Z=0, use local <strong>+X for Size X/forward</strong>, and local <strong>+Y for Size Y</strong>.</p>
+  <p>Model each standard building at the exact dimensions below. The table uses CSV X × Y × Z in metres. For this centimetre, Y-up Houdini setup, make the source Box size <strong>(X × 100, Z × 100, Y × 100)</strong> on Houdini X/Y/Z. The generator reserves that exact footprint, so Copy to Points applies only position and rotation—<strong>never scale these eight building assets</strong>. Put every pivot at bottom center, keep the floor at Y=0, use local +X as forward, and use local Z for footprint width.</p>
   <div class="table-wrap asset-sizes">
     <table>
       <thead><tr><th>Building</th><th>Exact box size X × Y × Z</th><th>Required packed primitive <code>name</code></th></tr></thead>
@@ -155,18 +188,18 @@ s@name = s@asset_name;</pre>
       </tbody>
     </table>
   </div>
-  <p>For each Box SOP, set Size to the listed X/Y/Z values and Center to <code>0, 0, Z/2</code>. For the two trapezoid assets, keep the listed bounding box but taper one pair of opposite edges to match the map silhouette.</p>
+  <p>Example: Cottage 2 × 3 × 4 m becomes a Houdini Box with Size <code>200, 400, 300</code> and Center <code>0, 200, 0</code>. For the two trapezoid assets, keep the listed bounding box but taper one pair of opposite edges to match the map silhouette.</p>
   <h3>Landmarks and linear proxy sources</h3>
   <div class="table-wrap">
     <table>
       <thead><tr><th>Proxy type</th><th>Source geometry and pivot</th><th>Required packed primitive <code>name</code></th></tr></thead>
       <tbody>
-        <tr><td>Generated landmarks</td><td>Market, church, and castle footprints vary with the layout. Use a bottom-centered 1 × 1 × 1 proxy for blockout scaling, or choose a hero asset that fits <code>SizeX/Y</code>.</td><td><code>building_market</code>, <code>building_church</code>, <code>building_castle</code></td></tr>
-        <tr><td>Wall straight</td><td>1 × 1 × 1 m box, bottom-center pivot. +X runs along the wall and is stretched to <code>SegmentLength</code>.</td><td><code>wall_city_straight</code>, <code>wall_castle_straight</code></td></tr>
-        <tr><td>Wall turn</td><td>1 × 1 × 1 m corner/junction proxy, bottom-center pivot. It is placed once where two wall segments meet.</td><td><code>wall_city_turn</code>, <code>wall_castle_turn</code></td></tr>
-        <tr><td>Wall tower at end</td><td>1 × 1 × 1 m tower proxy, bottom-center pivot. It is placed at each side of a gate opening where only one wall segment continues.</td><td><code>wall_city_tower_end</code>, <code>wall_castle_tower_end</code></td></tr>
-        <tr><td>Roads</td><td>1 × 1 × 1 m box with Z from −1 to 0, so its top remains at ground level.</td><td><code>road_primary</code>, <code>road_internal</code></td></tr>
-        <tr><td>River</td><td>1 × 1 m XY grid at Z=0, or a thin 1 × 1 × 1 box with Z from −1 to 0. +X follows flow.</td><td><code>river</code></td></tr>
+        <tr><td>Generated landmarks</td><td>One-unit Y-up box, bottom-center pivot. Market, church, and castle footprints vary and use point scaling for blockout, or a hero asset selected to fit.</td><td><code>building_market</code>, <code>building_church</code>, <code>building_castle</code></td></tr>
+        <tr><td>Wall straight</td><td>One-unit Y-up box, bottom-center pivot. +X runs along the wall and is stretched to <code>SegmentLength</code>.</td><td><code>wall_city_straight</code>, <code>wall_castle_straight</code></td></tr>
+        <tr><td>Wall turn</td><td>One-unit Y-up corner/junction proxy, bottom-center pivot. It is placed once where two wall segments meet.</td><td><code>wall_city_turn</code>, <code>wall_castle_turn</code></td></tr>
+        <tr><td>Wall tower at end</td><td>One-unit Y-up tower proxy, bottom-center pivot. It is placed at each side of a gate opening where only one wall segment continues.</td><td><code>wall_city_tower_end</code>, <code>wall_castle_tower_end</code></td></tr>
+        <tr><td>Roads</td><td>One-unit box with Y from −1 to 0, so its top remains at ground level. +X runs along the road.</td><td><code>road_primary</code>, <code>road_internal</code></td></tr>
+        <tr><td>River</td><td>One-unit XZ grid at Y=0, or a thin box with Y from −1 to 0. +X follows flow.</td><td><code>river</code></td></tr>
       </tbody>
     </table>
   </div>
@@ -186,7 +219,7 @@ s@name = s@asset_name;</pre>
   <ul>
     <li>The eight standard building sources are already full size. Their point scale is always <code>{1, 1, 1}</code>; <code>SizeX/Y/Z</code> is a validation value, not a transform.</li>
     <li>Market, church, and castle remain layout-dependent landmarks. Scale only a simple landmark proxy, or select a production asset that fits the exported footprint.</li>
-    <li>Roads, walls, and rivers still use one-metre source geometry and point scale because every segment has a different length.</li>
+    <li>Roads, walls, and rivers use one-Houdini-unit source geometry and centimetre point scale because every segment has a different length.</li>
   </ul>
 
   <h3>Walls in Houdini</h3>
@@ -219,7 +252,7 @@ v@end_b = @P + forward * (f@segment_length * 0.5);</pre>
     <li>For a blockout, copy the named river grid or thin box to the points. The pieces should meet end-to-end.</li>
     <li>For a continuous river, derive endpoints with the same VEX used for roads, create line primitives, Fuse endpoints, then use PolyPath.</li>
     <li>Resample and Smooth the centerline before sweeping a flat strip. Drive the strip's width from <code>segment_width</code>.</li>
-    <li>Set the water surface at Z=0 or project it to the desired water elevation. Build the riverbed separately by lowering and widening a copy of the strip.</li>
+    <li>Set the water surface at Y=0 or project it to the desired water elevation. Build the riverbed separately by lowering and widening a copy of the strip.</li>
   </ol>
 
   <h2>Unreal Engine PCG — step by step</h2>

@@ -38,7 +38,7 @@
     <ol>
       <li>Generate the village and choose the required building quantity.</li>
       <li>Open <strong>Menu → Export Houdini/Unreal CSV</strong>.</li>
-      <li>The downloaded file contains buildings, individual wall segments, primary road segments, and internal street segments.</li>
+      <li>The downloaded file contains buildings, individual wall segments, primary road segments, internal street segments, and river segments.</li>
     </ol>
   </div>
 
@@ -56,18 +56,18 @@
       <thead><tr><th>Column</th><th>Meaning</th></tr></thead>
       <tbody>
         <tr><td><code>Name</code></td><td>Unique row ID; also satisfies Unreal Data Table's required first column.</td></tr>
-        <tr><td><code>ElementType</code></td><td><code>building</code>, <code>wall</code>, or <code>road</code>.</td></tr>
-        <tr><td><code>BuildingName</code></td><td>Building class shown by map hover. Empty for roads and walls.</td></tr>
-        <tr><td><code>AssetName</code></td><td>Stable lookup key such as <code>building_cottage</code>, <code>wall_city</code>, <code>road_primary</code>, or <code>road_internal</code>.</td></tr>
+        <tr><td><code>ElementType</code></td><td><code>building</code>, <code>wall</code>, <code>road</code>, or <code>river</code>.</td></tr>
+        <tr><td><code>BuildingName</code></td><td>Building class shown by map hover. Empty for roads, walls, and rivers.</td></tr>
+        <tr><td><code>AssetName</code></td><td>Stable lookup key such as <code>building_cottage</code>, <code>wall_city</code>, <code>road_primary</code>, <code>road_internal</code>, or <code>river</code>.</td></tr>
         <tr><td><code>PositionX/Y/Z</code></td><td>World-space point position in metres.</td></tr>
         <tr><td><code>RotationPitch/Yaw/Roll</code></td><td>Euler rotation in degrees.</td></tr>
         <tr><td><code>SizeX/Y/Z</code></td><td>Proxy dimensions. Building Z values are useful default heights; replace them with production asset dimensions as needed.</td></tr>
-        <tr><td><code>SegmentLength</code></td><td>Wall or road segment length. Zero for buildings.</td></tr>
-        <tr><td><code>SegmentWidth</code></td><td>Wall thickness or road width. Zero for buildings.</td></tr>
+        <tr><td><code>SegmentLength</code></td><td>Wall, road, or river segment length. Zero for buildings.</td></tr>
+        <tr><td><code>SegmentWidth</code></td><td>Wall thickness, road width, or river width. Zero for buildings.</td></tr>
       </tbody>
     </table>
   </div>
-  <p class="note">Roads and walls are exported as midpoint-oriented segments rather than a single curve. This makes the same CSV directly usable for box proxies, instanced modular pieces, or conversion back into connected curves.</p>
+  <p class="note">Roads, walls, and rivers are exported as midpoint-oriented segments rather than a single curve. This makes the same CSV directly usable for proxies, instanced modular pieces, or conversion back into connected curves.</p>
 
   <h2>Houdini SOP workflow</h2>
   <ol>
@@ -120,14 +120,74 @@ with open(csv_path, newline="", encoding="utf-8-sig") as stream:
   <h3>Point transform wrangle</h3>
   <pre>float yaw = radians(f@rotation_yaw);
 p@orient = quaternion(yaw, {0, 0, 1});
-v@scale = set(f@size_x, f@size_y, f@size_z);</pre>
+v@scale = set(f@size_x, f@size_y, f@size_z);
+s@name = s@asset_name;</pre>
+
+  <h3>Exact proxy sizes and names</h3>
+  <p>Build every source proxy at <strong>1 × 1 × 1 Houdini units</strong>. The CSV point scale supplies the final dimensions in metres. All proxies must use local <strong>+X as length/forward</strong> and local <strong>+Y as width</strong>.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Proxy type</th><th>Source geometry and pivot</th><th>Required packed primitive <code>name</code></th></tr></thead>
+      <tbody>
+        <tr><td>Standard buildings</td><td>Box: X/Y −0.5 to 0.5, Z 0 to 1. Bottom-center pivot.</td><td><code>building_cottage</code>, <code>building_row_house</code>, <code>building_townhouse</code>, <code>building_workshop</code>, <code>building_hall</code>, <code>building_warehouse</code>, <code>building_corner_house</code>, <code>building_merchant_house</code></td></tr>
+        <tr><td>Special buildings</td><td>Same bottom-centered 1 × 1 × 1 box rule.</td><td><code>building_market</code>, <code>building_church</code>, <code>building_castle</code></td></tr>
+        <tr><td>Walls</td><td>Box: X/Y −0.5 to 0.5, Z 0 to 1. +X runs along the wall.</td><td><code>wall_city</code>, <code>wall_castle</code></td></tr>
+        <tr><td>Roads</td><td>Box: X/Y −0.5 to 0.5, Z −1 to 0, so its top remains at ground level.</td><td><code>road_primary</code>, <code>road_internal</code></td></tr>
+        <tr><td>River</td><td>Box: X/Y −0.5 to 0.5, Z −1 to 0, or a 1 × 1 XY Grid at Z=0. +X follows flow.</td><td><code>river</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">Names must match exactly, including underscores and lowercase letters. A mismatched name produces a point with no copied source piece.</p>
+
+  <h3>Build the named source library</h3>
+  <ol>
+    <li>Create one geometry branch per proxy listed above.</li>
+    <li>Use a Name SOP on each branch to set the primitive <code>name</code> to the required value.</li>
+    <li>Pack each branch with a Pack SOP while preserving <code>name</code>.</li>
+    <li>Merge all packed branches. This merged stream is input 1 of Copy to Points.</li>
+    <li>Connect the transformed CSV points to input 2 of Copy to Points.</li>
+    <li>Enable <strong>Transform Using Template Point Attributes</strong>, enable <strong>Pack and Instance</strong>, and set <strong>Piece Attribute</strong> to <code>name</code>.</li>
+  </ol>
 
   <h3>Proxy reconstruction</h3>
   <ul>
-    <li>Create a unit Box with XY bounds −0.5 to 0.5 and Z bounds 0 to 1, then Copy to Points using <code>orient</code> and <code>scale</code>.</li>
+    <li>The source is always one unit. A building point with <code>scale = {4, 6, 5}</code> therefore produces a 4 m × 6 m × 5 m proxy.</li>
     <li>For production buildings, map <code>asset_name</code> to packed primitives. Preserve the CSV size as a footprint check rather than automatically stretching final art.</li>
-    <li>For roads and walls, the unit box produces immediate segment proxies. For continuous geometry, sort/group points by <code>asset_name</code>, derive endpoints from length and yaw, fuse matching endpoints, and build polylines before sweeping a profile.</li>
+    <li>For roads, walls, and rivers, the unit box produces immediate segment proxies with no additional math.</li>
   </ul>
+
+  <h3>Walls in Houdini</h3>
+  <ol>
+    <li>Use a Blast SOP with <code>@asset_name=wall_city</code> or <code>@asset_name=wall_castle</code>.</li>
+    <li>For a fast blockout, copy the corresponding unit wall box to those points.</li>
+    <li>For modular walls, use <code>segment_length</code> to calculate module count: <code>max(1, round(segment_length / module_length))</code>.</li>
+    <li>Distribute modules from −half-length to +half-length along point-local X. Keep the original <code>orient</code> so corners follow the exported wall.</li>
+    <li>Do not fill missing segments automatically; those gaps are city gates.</li>
+  </ol>
+
+  <h3>Roads in Houdini</h3>
+  <ol>
+    <li>Separate <code>road_primary</code> and <code>road_internal</code> with Blast or Split SOPs.</li>
+    <li>Use the thin unit road box for a direct proxy. The exporter supplies primary-road width and narrower internal-street width through <code>size_y</code>.</li>
+    <li>For terrain roads, derive each segment's two endpoints in a Point Wrangle:</li>
+  </ol>
+  <pre>vector forward = qrotate(p@orient, {1, 0, 0});
+v@end_a = @P - forward * (f@segment_length * 0.5);
+v@end_b = @P + forward * (f@segment_length * 0.5);</pre>
+  <ol start="4">
+    <li>Create line primitives from <code>end_a</code> to <code>end_b</code>, then Fuse endpoints with a small tolerance.</li>
+    <li>Use PolyPath or a For-Each Connected Piece loop to form road curves. Preserve <code>segment_width</code> as a width attribute.</li>
+    <li>Ray the curves onto terrain, Resample them, and Sweep a flat profile. Use primary and internal roads as separate branches so their widths and materials remain different.</li>
+  </ol>
+
+  <h3>River in Houdini</h3>
+  <ol>
+    <li>Filter points with <code>@asset_name=river</code>. River rows are now exported with midpoint, yaw, length, and width.</li>
+    <li>For a blockout, copy the named river grid or thin box to the points. The pieces should meet end-to-end.</li>
+    <li>For a continuous river, derive endpoints with the same VEX used for roads, create line primitives, Fuse endpoints, then use PolyPath.</li>
+    <li>Resample and Smooth the centerline before sweeping a flat strip. Drive the strip's width from <code>segment_width</code>.</li>
+    <li>Set the water surface at Z=0 or project it to the desired water elevation. Build the riverbed separately by lowering and widening a copy of the strip.</li>
+  </ol>
 
   <h2>Unreal Engine PCG — step by step</h2>
   <p>This workflow uses a Data Table, lightweight marker actors, and a PCG graph. It avoids version-sensitive custom PCG C++ nodes and works well for an initial proxy pass.</p>
@@ -213,7 +273,7 @@ struct FVillagePointRow : public FTableRowBase
     <li>Add a PCG Volume covering the village and create a PCG Graph.</li>
     <li>Add a <strong>Get Actor Data</strong> node. Set its Actor Selector to select actors by the <code>VillageCSV</code> tag and include <code>BP_VillagePointMarker</code>.</li>
     <li>If the selected actor data is not already point data in your Unreal version, pass it through <strong>To Point</strong>.</li>
-    <li>Create branches using <strong>Get Actor Data</strong> filtered by each <code>AssetName</code> tag—for example <code>building_cottage</code>, <code>wall_city</code>, <code>road_primary</code>, and <code>road_internal</code>.</li>
+    <li>Create branches using <strong>Get Actor Data</strong> filtered by each <code>AssetName</code> tag—for example <code>building_cottage</code>, <code>wall_city</code>, <code>road_primary</code>, <code>road_internal</code>, and <code>river</code>.</li>
     <li>Connect every branch to a <strong>Static Mesh Spawner</strong>. Assign the matching building mesh, wall proxy, or road proxy.</li>
     <li>For the first validation pass, use the one-metre cube in every branch. The marker's transform and scale should reconstruct the CSV dimensions exactly.</li>
     <li>Generate the PCG component and compare the proxy settlement with the browser map.</li>
@@ -227,18 +287,19 @@ DesiredWorldSizeCm = FVector(SizeX, SizeY, SizeZ) * 100.0f;
 Scale3D = DesiredWorldSizeCm / SourceMeshBoundsCm;</pre>
   <p>Use the dimensionless <code>Scale3D</code> ratio as point scale. Do not use centimetre dimensions directly as Unreal scale. For hero buildings, keep scale uniform and use the CSV dimensions only to select an asset that fits the footprint.</p>
 
-  <h3>9. Roads and walls</h3>
+  <h3>9. Roads, walls, and rivers</h3>
   <ul>
-    <li><strong>Fast proxy:</strong> spawn the one-metre cube using the exported segment transform. <code>SizeX</code> is segment length, <code>SizeY</code> is width/thickness, and <code>SizeZ</code> is proxy height.</li>
+    <li><strong>Fast proxy:</strong> spawn the one-metre cube using the exported segment transform. <code>SizeX</code> is segment length, <code>SizeY</code> is width/thickness, and <code>SizeZ</code> is proxy height. Use a flat plane or thin box for <code>river</code>.</li>
     <li><strong>Modular walls:</strong> replace each long wall proxy with repeated modules. Divide <code>SegmentLength × 100</code> by module length, round to a whole count, and distribute instances along local +X.</li>
     <li><strong>Production roads:</strong> derive segment endpoints from midpoint, yaw, and half-length; merge endpoints within a tolerance; then create Unreal Splines for landscape projection and spline-mesh placement.</li>
+    <li><strong>Production river:</strong> use the same endpoint reconstruction, merge the <code>river</code> segments into a spline, and drive water width from <code>SegmentWidth × 100</code>.</li>
     <li><strong>Gates:</strong> missing wall segments are intentional gate openings. Do not bridge gaps automatically unless the design calls for a gate asset.</li>
   </ul>
 
   <h3>10. Validation checklist</h3>
   <ul>
     <li>Castle, market, and church assets appear exactly once per exported footprint.</li>
-    <li>Roads and walls point along local +X and do not need an extra 90° yaw correction.</li>
+    <li>Roads, walls, and river segments point along local +X and do not need an extra 90° yaw correction.</li>
     <li>Building proxies rest on Z=0 instead of being half buried.</li>
     <li>The import is not mirrored. If it is, confirm that no additional Y-axis inversion was added in Unreal.</li>
     <li>Re-importing first deletes actors tagged <code>VillageCSV</code>, preventing duplicate PCG source points.</li>

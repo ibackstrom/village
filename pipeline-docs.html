@@ -129,18 +129,26 @@ v@scale = set(f@size_x, f@size_y, f@size_z);</pre>
     <li>For roads and walls, the unit box produces immediate segment proxies. For continuous geometry, sort/group points by <code>asset_name</code>, derive endpoints from length and yaw, fuse matching endpoints, and build polylines before sweeping a profile.</li>
   </ul>
 
-  <h2>Unreal Engine PCG workflow</h2>
+  <h2>Unreal Engine PCG — step by step</h2>
+  <p>This workflow uses a Data Table, lightweight marker actors, and a PCG graph. It avoids version-sensitive custom PCG C++ nodes and works well for an initial proxy pass.</p>
+
+  <h3>1. Enable the required plugins</h3>
   <ol>
-    <li>Create a Blueprint/C++ row struct matching the fields below and deriving from <code>FTableRowBase</code>.</li>
-    <li>Import the CSV as a Data Table using that row struct. <code>Name</code> is consumed as the row key.</li>
-    <li>Use an Editor Utility Blueprint or a small PCG data-source actor to iterate the Data Table and emit one PCG point per row.</li>
-    <li>Convert metres to centimetres: position and size × 100.</li>
-    <li>Write <code>ElementType</code>, <code>BuildingName</code>, and <code>AssetName</code> into PCG metadata.</li>
-    <li>Branch by <code>ElementType</code>. Use Mesh Selector By Attribute with <code>AssetName</code> for buildings; use oriented box meshes or spline reconstruction for roads and walls.</li>
+    <li>Open <strong>Edit → Plugins</strong>.</li>
+    <li>Enable <strong>Procedural Content Generation Framework (PCG)</strong>.</li>
+    <li>Enable <strong>Editor Scripting Utilities</strong> for the CSV import utility.</li>
+    <li>Restart Unreal Editor when prompted.</li>
   </ol>
 
-  <h3>Unreal Data Table row</h3>
-  <pre>USTRUCT(BlueprintType)
+  <h3>2. Create the CSV row structure</h3>
+  <p>Create the following C++ row type, or create an equivalent Blueprint Structure with the same names and types. The CSV headers deliberately match these properties. The first <code>Name</code> column is used automatically as the Data Table row key and is not declared in the structure.</p>
+  <pre>#pragma once
+
+#include "CoreMinimal.h"
+#include "Engine/DataTable.h"
+#include "VillagePointRow.generated.h"
+
+USTRUCT(BlueprintType)
 struct FVillagePointRow : public FTableRowBase
 {
     GENERATED_BODY()
@@ -161,13 +169,80 @@ struct FVillagePointRow : public FTableRowBase
     UPROPERTY(EditAnywhere, BlueprintReadOnly) float SegmentWidth = 0;
 };</pre>
 
-  <h3>PCG point conversion</h3>
-  <p>For each row, set the point transform to:</p>
+  <h3>3. Import the Data Table</h3>
+  <ol>
+    <li>Copy the exported CSV into the Unreal project's <code>Content</code> folder or another source-data folder.</li>
+    <li>In the Content Browser choose <strong>Import</strong> and select the CSV.</li>
+    <li>Choose <strong>DataTable</strong> and select <code>VillagePointRow</code> as the row structure.</li>
+    <li>Open the resulting Data Table. Confirm that building rows have <code>ElementType = building</code> and that wall and road rows have positive <code>SegmentLength</code>.</li>
+  </ol>
+
+  <h3>4. Build one marker actor</h3>
+  <ol>
+    <li>Create an Actor Blueprint named <code>BP_VillagePointMarker</code>.</li>
+    <li>Use a Scene Component as the root. Add an optional Editor-only Billboard so markers are easy to select.</li>
+    <li>Add exposed variables: <code>ElementType</code>, <code>BuildingName</code>, and <code>AssetName</code> as Strings, plus <code>SourceRowName</code> as Name.</li>
+    <li>Disable collision and hide the Billboard in game. The actor is source data for PCG, not final geometry.</li>
+  </ol>
+
+  <h3>5. Create the Editor Utility importer</h3>
+  <p>Create an Editor Utility Blueprint or Editor Utility Widget named <code>EUW_ImportVillageCSV</code> with a Data Table variable and an <strong>Import Village</strong> button. Its button graph should do the following:</p>
+  <ol>
+    <li><strong>Delete the previous import:</strong> Get All Actors of Class <code>BP_VillagePointMarker</code>; destroy actors carrying the <code>VillageCSV</code> tag.</li>
+    <li><strong>Read rows:</strong> Get Data Table Row Names, then run a For Each Loop.</li>
+    <li><strong>Resolve the row:</strong> Get Data Table Row using the current row name.</li>
+    <li><strong>Convert location:</strong> make a Vector from <code>PositionX/Y/Z</code> and multiply it by <code>100</code>, because the CSV is metres and Unreal uses centimetres.</li>
+    <li><strong>Convert rotation:</strong> Make Rotator using <code>RotationRoll</code>, <code>RotationPitch</code>, and <code>RotationYaw</code>.</li>
+    <li><strong>Create proxy scale:</strong> make a Vector from <code>SizeX/Y/Z</code>. This is the correct actor scale only when the proxy mesh is exactly one metre along each local axis.</li>
+    <li><strong>Spawn marker:</strong> Spawn Actor from Class <code>BP_VillagePointMarker</code> with the converted location and rotation, then Set Actor Scale 3D to the proxy scale.</li>
+    <li><strong>Copy metadata:</strong> set the marker's exposed variables from the row.</li>
+    <li><strong>Add actor tags:</strong> add <code>VillageCSV</code>, the row's <code>ElementType</code>, and the row's <code>AssetName</code>. Convert strings to Name for actor tags.</li>
+  </ol>
+  <p class="note">The actor tags make the PCG graph simple and reliable: each branch can select exactly one asset class without requiring custom metadata code.</p>
+
+  <h3>6. Prepare proxy meshes</h3>
+  <ol>
+    <li>Create or import a one-metre cube whose local dimensions are 100 × 100 × 100 cm.</li>
+    <li>Place its pivot at the bottom center: centered in X/Y, with the bottom at Z=0.</li>
+    <li>Keep local +X as the forward/length direction. Wall and road segments are exported along local +X.</li>
+    <li>Create separate materials for buildings, walls, primary roads, and internal roads so the reconstruction is easy to inspect.</li>
+  </ol>
+
+  <h3>7. Build the PCG graph</h3>
+  <ol>
+    <li>Add a PCG Volume covering the village and create a PCG Graph.</li>
+    <li>Add a <strong>Get Actor Data</strong> node. Set its Actor Selector to select actors by the <code>VillageCSV</code> tag and include <code>BP_VillagePointMarker</code>.</li>
+    <li>If the selected actor data is not already point data in your Unreal version, pass it through <strong>To Point</strong>.</li>
+    <li>Create branches using <strong>Get Actor Data</strong> filtered by each <code>AssetName</code> tag—for example <code>building_cottage</code>, <code>wall_city</code>, <code>road_primary</code>, and <code>road_internal</code>.</li>
+    <li>Connect every branch to a <strong>Static Mesh Spawner</strong>. Assign the matching building mesh, wall proxy, or road proxy.</li>
+    <li>For the first validation pass, use the one-metre cube in every branch. The marker's transform and scale should reconstruct the CSV dimensions exactly.</li>
+    <li>Generate the PCG component and compare the proxy settlement with the browser map.</li>
+  </ol>
+
+  <h3>8. Replace proxies with production meshes</h3>
+  <p>Production assets rarely measure exactly one metre, so calculate point scale from the desired CSV dimensions and the source mesh bounds:</p>
   <pre>Location = FVector(PositionX, PositionY, PositionZ) * 100.0f;
 Rotation = FRotator(RotationPitch, RotationYaw, RotationRoll);
 DesiredWorldSizeCm = FVector(SizeX, SizeY, SizeZ) * 100.0f;
 Scale3D = DesiredWorldSizeCm / SourceMeshBoundsCm;</pre>
-  <p>For Static Mesh Spawner assets, use the dimensionless <code>Scale3D</code> ratio as point scale. Do not use centimetre dimensions directly as Unreal scale.</p>
+  <p>Use the dimensionless <code>Scale3D</code> ratio as point scale. Do not use centimetre dimensions directly as Unreal scale. For hero buildings, keep scale uniform and use the CSV dimensions only to select an asset that fits the footprint.</p>
+
+  <h3>9. Roads and walls</h3>
+  <ul>
+    <li><strong>Fast proxy:</strong> spawn the one-metre cube using the exported segment transform. <code>SizeX</code> is segment length, <code>SizeY</code> is width/thickness, and <code>SizeZ</code> is proxy height.</li>
+    <li><strong>Modular walls:</strong> replace each long wall proxy with repeated modules. Divide <code>SegmentLength × 100</code> by module length, round to a whole count, and distribute instances along local +X.</li>
+    <li><strong>Production roads:</strong> derive segment endpoints from midpoint, yaw, and half-length; merge endpoints within a tolerance; then create Unreal Splines for landscape projection and spline-mesh placement.</li>
+    <li><strong>Gates:</strong> missing wall segments are intentional gate openings. Do not bridge gaps automatically unless the design calls for a gate asset.</li>
+  </ul>
+
+  <h3>10. Validation checklist</h3>
+  <ul>
+    <li>Castle, market, and church assets appear exactly once per exported footprint.</li>
+    <li>Roads and walls point along local +X and do not need an extra 90° yaw correction.</li>
+    <li>Building proxies rest on Z=0 instead of being half buried.</li>
+    <li>The import is not mirrored. If it is, confirm that no additional Y-axis inversion was added in Unreal.</li>
+    <li>Re-importing first deletes actors tagged <code>VillageCSV</code>, preventing duplicate PCG source points.</li>
+  </ul>
 
   <div class="card">
     <h3>Recommended production setup</h3>
@@ -178,6 +253,18 @@ Scale3D = DesiredWorldSizeCm / SourceMeshBoundsCm;</pre>
       <li><strong>Iteration:</strong> keep <code>Name</code> as the stable source key so regenerated data can update rather than duplicate existing proxies.</li>
     </ul>
   </div>
+
+  <h2>Commercial use and licensing</h2>
+  <p>Watabou's official <a href="https://watabou.github.io/faq.html">Procgen Arcana FAQ</a> and <a href="https://watabou.itch.io/medieval-fantasy-city-generator">generator page</a> state that generated maps may be copied, modified, and included in commercial projects. Attribution is appreciated but not required.</p>
+  <div class="card">
+    <h3>Important distinction</h3>
+    <ul>
+      <li><strong>Generated maps:</strong> commercial use is explicitly allowed by the creator's published output permission. Exported layout data is reasonably covered by the same broad permission, although CSV is not named separately.</li>
+      <li><strong>The generator application/code:</strong> the public <a href="https://github.com/watabou/TownGeneratorOS">TownGeneratorOS source</a> is an older version licensed under <a href="https://github.com/watabou/TownGeneratorOS/blob/master/LICENSE">GPLv3</a>. Commercial redistribution is possible only while complying with GPL source, notice, and licensing obligations.</li>
+      <li><strong>This mirrored newer web build:</strong> the official repository says it lacks newer features, and the hosted build does not publish a clear project-wide license in the downloaded files. Do not assume the older repository's GPL automatically covers every newer file. Obtain Watabou's permission before commercially redistributing this modified generator itself.</li>
+    </ul>
+  </div>
+  <p class="note">This is a source-based practical summary, not legal advice. For a commercial release of the generator application—not merely its outputs—have counsel review the exact files and permissions.</p>
 </main>
 </body>
 </html>

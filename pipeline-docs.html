@@ -25,6 +25,14 @@
     th { background: #e9e1d4; }
     .note { border-left: 4px solid var(--accent); padding: 10px 14px; background: #eee4d5; }
     ol li, ul li { margin: .45em 0; }
+    @media (max-width: 600px) {
+      .asset-sizes table, .asset-sizes tbody, .asset-sizes tr, .asset-sizes td { display: block; min-width: 0; width: 100%; }
+      .asset-sizes thead { display: none; }
+      .asset-sizes tr { border-bottom: 1px solid var(--line); padding: 10px 0; }
+      .asset-sizes td { border: 0; padding: 2px 7px; overflow-wrap: anywhere; }
+      .asset-sizes td:nth-child(2)::before { content: "Size: "; font-weight: 700; }
+      .asset-sizes td:nth-child(3)::before { content: "Name: "; font-weight: 700; }
+    }
   </style>
 </head>
 <body>
@@ -38,7 +46,7 @@
     <ol>
       <li>Generate the village and choose the required building quantity.</li>
       <li>Open <strong>Menu → Export Houdini/Unreal CSV</strong>.</li>
-      <li>The downloaded file contains buildings, individual wall segments, primary road segments, internal street segments, and river segments.</li>
+      <li>The downloaded file contains buildings, named wall straight/turn/tower points, primary road segments, internal street segments, and river segments.</li>
     </ol>
   </div>
 
@@ -58,23 +66,23 @@
         <tr><td><code>Name</code></td><td>Unique row ID; also satisfies Unreal Data Table's required first column.</td></tr>
         <tr><td><code>ElementType</code></td><td><code>building</code>, <code>wall</code>, <code>road</code>, or <code>river</code>.</td></tr>
         <tr><td><code>BuildingName</code></td><td>Building class shown by map hover. Empty for roads, walls, and rivers.</td></tr>
-        <tr><td><code>AssetName</code></td><td>Stable lookup key such as <code>building_cottage</code>, <code>wall_city</code>, <code>road_primary</code>, <code>road_internal</code>, or <code>river</code>.</td></tr>
+        <tr><td><code>AssetName</code></td><td>Stable lookup key such as <code>building_cottage</code>, <code>wall_city_straight</code>, <code>wall_city_turn</code>, <code>wall_city_tower_end</code>, <code>road_primary</code>, or <code>river</code>.</td></tr>
         <tr><td><code>PositionX/Y/Z</code></td><td>World-space point position in metres.</td></tr>
         <tr><td><code>RotationPitch/Yaw/Roll</code></td><td>Euler rotation in degrees.</td></tr>
-        <tr><td><code>SizeX/Y/Z</code></td><td>Proxy dimensions. Building Z values are useful default heights; replace them with production asset dimensions as needed.</td></tr>
-        <tr><td><code>SegmentLength</code></td><td>Wall, road, or river segment length. Zero for buildings.</td></tr>
+        <tr><td><code>SizeX/Y/Z</code></td><td>Authored dimensions for the eight standard building assets; segment dimensions for walls, roads, and rivers. Landmark values describe the generated market, church, or castle footprint.</td></tr>
+        <tr><td><code>SegmentLength</code></td><td>Straight wall, road, or river segment length. Zero for buildings and wall turn/tower points.</td></tr>
         <tr><td><code>SegmentWidth</code></td><td>Wall thickness, road width, or river width. Zero for buildings.</td></tr>
       </tbody>
     </table>
   </div>
-  <p class="note">Roads, walls, and rivers are exported as midpoint-oriented segments rather than a single curve. This makes the same CSV directly usable for proxies, instanced modular pieces, or conversion back into connected curves.</p>
+  <p class="note">Roads and rivers are midpoint-oriented segments. Walls include midpoint-oriented straight rows plus point rows for turns and gate-end towers. This makes the same CSV directly usable for proxies, instanced modular pieces, or conversion back into connected curves.</p>
 
   <h2>Houdini SOP workflow</h2>
   <ol>
     <li>Save the CSV as <code>$HIP/village.csv</code>.</li>
     <li>Create a Geometry object and add a Python SOP.</li>
     <li>Paste the importer below. It creates points plus typed attributes.</li>
-    <li>Add an Attribute Wrangle to create <code>orient</code> and <code>scale</code>.</li>
+    <li>Add an Attribute Wrangle to create <code>orient</code>. Standard buildings stay at scale 1; only segment proxies and adaptive landmarks use the exported size.</li>
     <li>Split by <code>s@element_type</code> or <code>s@asset_name</code>, then use Copy to Points, an asset library, or an HDA.</li>
   </ol>
 
@@ -120,20 +128,45 @@ with open(csv_path, newline="", encoding="utf-8-sig") as stream:
   <h3>Point transform wrangle</h3>
   <pre>float yaw = radians(f@rotation_yaw);
 p@orient = quaternion(yaw, {0, 0, 1});
-v@scale = set(f@size_x, f@size_y, f@size_z);
+if (s@element_type == "building" &amp;&amp;
+    s@building_name != "Market" &amp;&amp;
+    s@building_name != "Church" &amp;&amp;
+    s@building_name != "Castle") {
+    v@scale = {1, 1, 1};
+} else {
+    v@scale = set(f@size_x, f@size_y, f@size_z);
+}
 s@name = s@asset_name;</pre>
 
   <h3>Exact proxy sizes and names</h3>
-  <p>Build every source proxy at <strong>1 × 1 × 1 Houdini units</strong>. The CSV point scale supplies the final dimensions in metres. All proxies must use local <strong>+X as length/forward</strong> and local <strong>+Y as width</strong>.</p>
+  <p>Model each standard building at the exact dimensions below in metres. The generator reserves that exact footprint, so Copy to Points applies only position and rotation—<strong>never scale these eight building assets</strong>. Put every pivot at bottom center, keep the floor at Z=0, use local <strong>+X for Size X/forward</strong>, and local <strong>+Y for Size Y</strong>.</p>
+  <div class="table-wrap asset-sizes">
+    <table>
+      <thead><tr><th>Building</th><th>Exact box size X × Y × Z</th><th>Required packed primitive <code>name</code></th></tr></thead>
+      <tbody>
+        <tr><td>Cottage</td><td><strong>2 × 3 × 4 m</strong></td><td><code>building_cottage</code></td></tr>
+        <tr><td>Row house</td><td><strong>1.5 × 3 × 5 m</strong></td><td><code>building_row_house</code></td></tr>
+        <tr><td>Townhouse</td><td><strong>2 × 3.5 × 7 m</strong></td><td><code>building_townhouse</code></td></tr>
+        <tr><td>Workshop</td><td><strong>2.5 × 3.5 × 5 m</strong></td><td><code>building_workshop</code></td></tr>
+        <tr><td>Hall</td><td><strong>3 × 4 × 8 m</strong></td><td><code>building_hall</code></td></tr>
+        <tr><td>Warehouse</td><td><strong>3 × 4.5 × 6 m</strong></td><td><code>building_warehouse</code></td></tr>
+        <tr><td>Corner house (trapezoid footprint)</td><td><strong>2.5 × 3.5 × 6 m</strong></td><td><code>building_corner_house</code></td></tr>
+        <tr><td>Merchant house (trapezoid footprint)</td><td><strong>3 × 4 × 7 m</strong></td><td><code>building_merchant_house</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>For each Box SOP, set Size to the listed X/Y/Z values and Center to <code>0, 0, Z/2</code>. For the two trapezoid assets, keep the listed bounding box but taper one pair of opposite edges to match the map silhouette.</p>
+  <h3>Landmarks and linear proxy sources</h3>
   <div class="table-wrap">
     <table>
       <thead><tr><th>Proxy type</th><th>Source geometry and pivot</th><th>Required packed primitive <code>name</code></th></tr></thead>
       <tbody>
-        <tr><td>Standard buildings</td><td>Box: X/Y −0.5 to 0.5, Z 0 to 1. Bottom-center pivot.</td><td><code>building_cottage</code>, <code>building_row_house</code>, <code>building_townhouse</code>, <code>building_workshop</code>, <code>building_hall</code>, <code>building_warehouse</code>, <code>building_corner_house</code>, <code>building_merchant_house</code></td></tr>
-        <tr><td>Special buildings</td><td>Same bottom-centered 1 × 1 × 1 box rule.</td><td><code>building_market</code>, <code>building_church</code>, <code>building_castle</code></td></tr>
-        <tr><td>Walls</td><td>Box: X/Y −0.5 to 0.5, Z 0 to 1. +X runs along the wall.</td><td><code>wall_city</code>, <code>wall_castle</code></td></tr>
-        <tr><td>Roads</td><td>Box: X/Y −0.5 to 0.5, Z −1 to 0, so its top remains at ground level.</td><td><code>road_primary</code>, <code>road_internal</code></td></tr>
-        <tr><td>River</td><td>Box: X/Y −0.5 to 0.5, Z −1 to 0, or a 1 × 1 XY Grid at Z=0. +X follows flow.</td><td><code>river</code></td></tr>
+        <tr><td>Generated landmarks</td><td>Market, church, and castle footprints vary with the layout. Use a bottom-centered 1 × 1 × 1 proxy for blockout scaling, or choose a hero asset that fits <code>SizeX/Y</code>.</td><td><code>building_market</code>, <code>building_church</code>, <code>building_castle</code></td></tr>
+        <tr><td>Wall straight</td><td>1 × 1 × 1 m box, bottom-center pivot. +X runs along the wall and is stretched to <code>SegmentLength</code>.</td><td><code>wall_city_straight</code>, <code>wall_castle_straight</code></td></tr>
+        <tr><td>Wall turn</td><td>1 × 1 × 1 m corner/junction proxy, bottom-center pivot. It is placed once where two wall segments meet.</td><td><code>wall_city_turn</code>, <code>wall_castle_turn</code></td></tr>
+        <tr><td>Wall tower at end</td><td>1 × 1 × 1 m tower proxy, bottom-center pivot. It is placed at each side of a gate opening where only one wall segment continues.</td><td><code>wall_city_tower_end</code>, <code>wall_castle_tower_end</code></td></tr>
+        <tr><td>Roads</td><td>1 × 1 × 1 m box with Z from −1 to 0, so its top remains at ground level.</td><td><code>road_primary</code>, <code>road_internal</code></td></tr>
+        <tr><td>River</td><td>1 × 1 m XY grid at Z=0, or a thin 1 × 1 × 1 box with Z from −1 to 0. +X follows flow.</td><td><code>river</code></td></tr>
       </tbody>
     </table>
   </div>
@@ -151,18 +184,18 @@ s@name = s@asset_name;</pre>
 
   <h3>Proxy reconstruction</h3>
   <ul>
-    <li>The source is always one unit. A building point with <code>scale = {4, 6, 5}</code> therefore produces a 4 m × 6 m × 5 m proxy.</li>
-    <li>For production buildings, map <code>asset_name</code> to packed primitives. Preserve the CSV size as a footprint check rather than automatically stretching final art.</li>
-    <li>For roads, walls, and rivers, the unit box produces immediate segment proxies with no additional math.</li>
+    <li>The eight standard building sources are already full size. Their point scale is always <code>{1, 1, 1}</code>; <code>SizeX/Y/Z</code> is a validation value, not a transform.</li>
+    <li>Market, church, and castle remain layout-dependent landmarks. Scale only a simple landmark proxy, or select a production asset that fits the exported footprint.</li>
+    <li>Roads, walls, and rivers still use one-metre source geometry and point scale because every segment has a different length.</li>
   </ul>
 
   <h3>Walls in Houdini</h3>
   <ol>
-    <li>Use a Blast SOP with <code>@asset_name=wall_city</code> or <code>@asset_name=wall_castle</code>.</li>
-    <li>For a fast blockout, copy the corresponding unit wall box to those points.</li>
-    <li>For modular walls, use <code>segment_length</code> to calculate module count: <code>max(1, round(segment_length / module_length))</code>.</li>
-    <li>Distribute modules from −half-length to +half-length along point-local X. Keep the original <code>orient</code> so corners follow the exported wall.</li>
-    <li>Do not fill missing segments automatically; those gaps are city gates.</li>
+    <li>Split the six wall asset names into straight, turn, and tower-end branches. City and castle variants remain separate.</li>
+    <li>For a fast blockout, copy the corresponding named source piece to each point. Straight rows have positive <code>segment_length</code>; turn and tower-end rows have zero.</li>
+    <li>For modular straight walls, use <code>segment_length</code> to calculate module count: <code>max(1, round(segment_length / module_length))</code>.</li>
+    <li>Distribute straight modules from −half-length to +half-length along point-local X. Keep the original <code>orient</code>.</li>
+    <li>Spawn <code>*_turn</code> once at every connected wall corner and <code>*_tower_end</code> once at both sides of each gate. Do not bridge the gap between endpoint towers.</li>
   </ol>
 
   <h3>Roads in Houdini</h3>
@@ -253,7 +286,7 @@ struct FVillagePointRow : public FTableRowBase
     <li><strong>Resolve the row:</strong> Get Data Table Row using the current row name.</li>
     <li><strong>Convert location:</strong> make a Vector from <code>PositionX/Y/Z</code> and multiply it by <code>100</code>, because the CSV is metres and Unreal uses centimetres.</li>
     <li><strong>Convert rotation:</strong> Make Rotator using <code>RotationRoll</code>, <code>RotationPitch</code>, and <code>RotationYaw</code>.</li>
-    <li><strong>Create proxy scale:</strong> make a Vector from <code>SizeX/Y/Z</code>. This is the correct actor scale only when the proxy mesh is exactly one metre along each local axis.</li>
+    <li><strong>Create proxy scale:</strong> standard building rows use <code>(1, 1, 1)</code>. Market/church/castle blockouts and wall/road/river rows use a Vector made from <code>SizeX/Y/Z</code>.</li>
     <li><strong>Spawn marker:</strong> Spawn Actor from Class <code>BP_VillagePointMarker</code> with the converted location and rotation, then Set Actor Scale 3D to the proxy scale.</li>
     <li><strong>Copy metadata:</strong> set the marker's exposed variables from the row.</li>
     <li><strong>Add actor tags:</strong> add <code>VillageCSV</code>, the row's <code>ElementType</code>, and the row's <code>AssetName</code>. Convert strings to Name for actor tags.</li>
@@ -262,10 +295,10 @@ struct FVillagePointRow : public FTableRowBase
 
   <h3>6. Prepare proxy meshes</h3>
   <ol>
-    <li>Create or import a one-metre cube whose local dimensions are 100 × 100 × 100 cm.</li>
-    <li>Place its pivot at the bottom center: centered in X/Y, with the bottom at Z=0.</li>
+    <li>Create the eight standard building meshes at the exact dimensions in the Houdini table above (multiply metres by 100 for centimetres). Do not normalize them to a one-metre cube.</li>
+    <li>Place every building pivot at the bottom center: centered in X/Y, with the floor at Z=0.</li>
     <li>Keep local +X as the forward/length direction. Wall and road segments are exported along local +X.</li>
-    <li>Create separate materials for buildings, walls, primary roads, and internal roads so the reconstruction is easy to inspect.</li>
+    <li>Create a separate one-metre cube for scalable landmark blockouts and linear segments. Create separate materials for buildings, walls, primary roads, and internal roads so the reconstruction is easy to inspect.</li>
   </ol>
 
   <h3>7. Build the PCG graph</h3>
@@ -273,24 +306,28 @@ struct FVillagePointRow : public FTableRowBase
     <li>Add a PCG Volume covering the village and create a PCG Graph.</li>
     <li>Add a <strong>Get Actor Data</strong> node. Set its Actor Selector to select actors by the <code>VillageCSV</code> tag and include <code>BP_VillagePointMarker</code>.</li>
     <li>If the selected actor data is not already point data in your Unreal version, pass it through <strong>To Point</strong>.</li>
-    <li>Create branches using <strong>Get Actor Data</strong> filtered by each <code>AssetName</code> tag—for example <code>building_cottage</code>, <code>wall_city</code>, <code>road_primary</code>, <code>road_internal</code>, and <code>river</code>.</li>
+    <li>Create branches using <strong>Get Actor Data</strong> filtered by each <code>AssetName</code> tag—for example <code>building_cottage</code>, <code>wall_city_straight</code>, <code>wall_city_turn</code>, <code>wall_city_tower_end</code>, <code>road_primary</code>, and <code>river</code>.</li>
     <li>Connect every branch to a <strong>Static Mesh Spawner</strong>. Assign the matching building mesh, wall proxy, or road proxy.</li>
-    <li>For the first validation pass, use the one-metre cube in every branch. The marker's transform and scale should reconstruct the CSV dimensions exactly.</li>
+    <li>For the first validation pass, assign each full-size standard building mesh to its matching branch. Use the one-metre proxy only for landmarks, walls, roads, and rivers.</li>
     <li>Generate the PCG component and compare the proxy settlement with the browser map.</li>
   </ol>
 
   <h3>8. Replace proxies with production meshes</h3>
-  <p>Production assets rarely measure exactly one metre, so calculate point scale from the desired CSV dimensions and the source mesh bounds:</p>
+  <p>Standard building meshes are authored at their final dimensions and keep unit scale:</p>
+  <pre>Location = FVector(PositionX, PositionY, PositionZ) * 100.0f;
+Rotation = FRotator(RotationPitch, RotationYaw, RotationRoll);
+Scale3D = FVector(1.0f, 1.0f, 1.0f);</pre>
+  <p>Only scalable landmark blockouts and linear segment proxies calculate scale from CSV dimensions:</p>
   <pre>Location = FVector(PositionX, PositionY, PositionZ) * 100.0f;
 Rotation = FRotator(RotationPitch, RotationYaw, RotationRoll);
 DesiredWorldSizeCm = FVector(SizeX, SizeY, SizeZ) * 100.0f;
 Scale3D = DesiredWorldSizeCm / SourceMeshBoundsCm;</pre>
-  <p>Use the dimensionless <code>Scale3D</code> ratio as point scale. Do not use centimetre dimensions directly as Unreal scale. For hero buildings, keep scale uniform and use the CSV dimensions only to select an asset that fits the footprint.</p>
+  <p>Use the dimensionless <code>Scale3D</code> ratio as point scale. Do not use centimetre dimensions directly as Unreal scale. For market, church, and castle hero buildings, use the CSV dimensions to select an asset that fits the generated footprint instead of stretching final art.</p>
 
   <h3>9. Roads, walls, and rivers</h3>
   <ul>
     <li><strong>Fast proxy:</strong> spawn the one-metre cube using the exported segment transform. <code>SizeX</code> is segment length, <code>SizeY</code> is width/thickness, and <code>SizeZ</code> is proxy height. Use a flat plane or thin box for <code>river</code>.</li>
-    <li><strong>Modular walls:</strong> replace each long wall proxy with repeated modules. Divide <code>SegmentLength × 100</code> by module length, round to a whole count, and distribute instances along local +X.</li>
+    <li><strong>Modular walls:</strong> use <code>*_straight</code> rows for repeated modules. Divide <code>SegmentLength × 100</code> by module length, round to a whole count, and distribute instances along local +X. Spawn one corner mesh for each <code>*_turn</code> row and one tower for each <code>*_tower_end</code> row.</li>
     <li><strong>Production roads:</strong> derive segment endpoints from midpoint, yaw, and half-length; merge endpoints within a tolerance; then create Unreal Splines for landscape projection and spline-mesh placement.</li>
     <li><strong>Production river:</strong> use the same endpoint reconstruction, merge the <code>river</code> segments into a spline, and drive water width from <code>SegmentWidth × 100</code>.</li>
     <li><strong>Gates:</strong> missing wall segments are intentional gate openings. Do not bridge gaps automatically unless the design calls for a gate asset.</li>
@@ -299,7 +336,8 @@ Scale3D = DesiredWorldSizeCm / SourceMeshBoundsCm;</pre>
   <h3>10. Validation checklist</h3>
   <ul>
     <li>Castle, market, and church assets appear exactly once per exported footprint.</li>
-    <li>Roads, walls, and river segments point along local +X and do not need an extra 90° yaw correction.</li>
+    <li>Wall rows resolve to <code>*_straight</code>, <code>*_turn</code>, or <code>*_tower_end</code>; no legacy unsuffixed wall asset names remain.</li>
+    <li>Road, river, and straight-wall segments point along local +X and do not need an extra 90° yaw correction.</li>
     <li>Building proxies rest on Z=0 instead of being half buried.</li>
     <li>The import is not mirrored. If it is, confirm that no additional Y-axis inversion was added in Unreal.</li>
     <li>Re-importing first deletes actors tagged <code>VillageCSV</code>, preventing duplicate PCG source points.</li>
@@ -309,7 +347,7 @@ Scale3D = DesiredWorldSizeCm / SourceMeshBoundsCm;</pre>
     <h3>Recommended production setup</h3>
     <ul>
       <li><strong>Buildings:</strong> map each <code>AssetName</code> to one or more weighted meshes; use the CSV transform as placement and footprint validation.</li>
-      <li><strong>Walls:</strong> use modular wall pieces aligned on local +X, or merge connected segments into splines and use a spline mesh.</li>
+      <li><strong>Walls:</strong> route straight, turn, and tower-end names to separate assets. Use modular straight pieces aligned on local +X, or merge straight segments into splines.</li>
       <li><strong>Roads:</strong> convert connected segment endpoints to splines for terrain projection, grading, and spline-mesh generation.</li>
       <li><strong>Iteration:</strong> keep <code>Name</code> as the stable source key so regenerated data can update rather than duplicate existing proxies.</li>
     </ul>

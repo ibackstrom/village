@@ -26,12 +26,16 @@
     .note { border-left: 4px solid var(--accent); padding: 10px 14px; background: #eee4d5; }
     ol li, ul li { margin: .45em 0; }
     @media (max-width: 600px) {
-      .asset-sizes table, .asset-sizes tbody, .asset-sizes tr, .asset-sizes td { display: block; min-width: 0; width: 100%; }
-      .asset-sizes thead { display: none; }
-      .asset-sizes tr { border-bottom: 1px solid var(--line); padding: 10px 0; }
-      .asset-sizes td { border: 0; padding: 2px 7px; overflow-wrap: anywhere; }
+      .asset-sizes table, .asset-sizes tbody, .asset-sizes tr, .asset-sizes td,
+      .copy-sources table, .copy-sources tbody, .copy-sources tr, .copy-sources td { display: block; min-width: 0; width: 100%; }
+      .asset-sizes thead, .copy-sources thead { display: none; }
+      .asset-sizes tr, .copy-sources tr { border-bottom: 1px solid var(--line); padding: 10px 0; }
+      .asset-sizes td, .copy-sources td { border: 0; padding: 2px 7px; overflow-wrap: anywhere; }
       .asset-sizes td:nth-child(2)::before { content: "Size: "; font-weight: 700; }
       .asset-sizes td:nth-child(3)::before { content: "Name: "; font-weight: 700; }
+      .copy-sources td:nth-child(2)::before { content: "Name: "; font-weight: 700; }
+      .copy-sources td:nth-child(3)::before { content: "Source: "; font-weight: 700; }
+      .copy-sources td:nth-child(4)::before { content: "Result: "; font-weight: 700; }
     }
   </style>
 </head>
@@ -189,21 +193,28 @@ s@name = s@asset_name;</pre>
     </table>
   </div>
   <p>Example: Cottage 2 × 3 × 4 m becomes a Houdini Box with Size <code>200, 400, 300</code> and Center <code>0, 200, 0</code>. For the two trapezoid assets, keep the listed bounding box but taper one pair of opposite edges to match the map silhouette.</p>
-  <h3>Landmarks and linear proxy sources</h3>
-  <div class="table-wrap">
+  <h3>Complete Copy to Points source checklist</h3>
+  <p>These scalable proxies must be exactly <strong>one Houdini unit</strong> before packing. The wrangle supplies centimetre scale in Houdini X/Y/Z order. Standard buildings are the exception: create those at the full sizes in the table above and keep their point scale at 1.</p>
+  <div class="table-wrap copy-sources">
     <table>
-      <thead><tr><th>Proxy type</th><th>Source geometry and pivot</th><th>Required packed primitive <code>name</code></th></tr></thead>
+      <thead><tr><th>Asset role</th><th>Required packed primitive <code>name</code></th><th>Source geometry in Houdini X/Y/Z</th><th>Result after Copy to Points</th></tr></thead>
       <tbody>
-        <tr><td>Generated landmarks</td><td>One-unit Y-up box, bottom-center pivot. Market, church, and castle footprints vary and use point scaling for blockout, or a hero asset selected to fit.</td><td><code>building_market</code>, <code>building_church</code>, <code>building_castle</code></td></tr>
-        <tr><td>Wall straight</td><td>One-unit Y-up box, bottom-center pivot. +X runs along the wall and is stretched to <code>SegmentLength</code>.</td><td><code>wall_city_straight</code>, <code>wall_castle_straight</code></td></tr>
-        <tr><td>Wall turn</td><td>One-unit Y-up corner/junction proxy, bottom-center pivot. It is placed once where two wall segments meet.</td><td><code>wall_city_turn</code>, <code>wall_castle_turn</code></td></tr>
-        <tr><td>Wall tower at end</td><td>One-unit Y-up tower proxy, bottom-center pivot. It is placed at each side of a gate opening where only one wall segment continues.</td><td><code>wall_city_tower_end</code>, <code>wall_castle_tower_end</code></td></tr>
-        <tr><td>Roads</td><td>One-unit box with Y from −1 to 0, so its top remains at ground level. +X runs along the road.</td><td><code>road_primary</code>, <code>road_internal</code></td></tr>
-        <tr><td>River</td><td>One-unit XZ grid at Y=0, or a thin box with Y from −1 to 0. +X follows flow.</td><td><code>river</code></td></tr>
+        <tr><td>Market proxy</td><td><code>building_market</code></td><td>Box Size <code>1, 1, 1</code>; Center <code>0, 0.5, 0</code>.</td><td>Generated footprint × 300 cm high: <code>size_x, 300, size_y</code>.</td></tr>
+        <tr><td>Church proxy</td><td><code>building_church</code></td><td>Box Size <code>1, 1, 1</code>; Center <code>0, 0.5, 0</code>.</td><td>Generated footprint × 1200 cm high: <code>size_x, 1200, size_y</code>.</td></tr>
+        <tr><td>Castle proxy</td><td><code>building_castle</code></td><td>Box Size <code>1, 1, 1</code>; Center <code>0, 0.5, 0</code>.</td><td>Generated footprint × 1400 cm high: <code>size_x, 1400, size_y</code>.</td></tr>
+        <tr><td>City wall straight</td><td><code>wall_city_straight</code></td><td>Box Size <code>1, 1, 1</code>; Center <code>0, 0.5, 0</code>; +X follows wall.</td><td><code>segment_length, 600, 190</code> cm.</td></tr>
+        <tr><td>Castle wall straight</td><td><code>wall_castle_straight</code></td><td>Box Size <code>1, 1, 1</code>; Center <code>0, 0.5, 0</code>; +X follows wall.</td><td><code>segment_length, 600, 190</code> cm.</td></tr>
+        <tr><td>City wall turn</td><td><code>wall_city_turn</code></td><td>One-unit Y-up corner proxy; bottom-center pivot.</td><td><code>190, 600, 190</code> cm at a connected corner.</td></tr>
+        <tr><td>Castle wall turn</td><td><code>wall_castle_turn</code></td><td>One-unit Y-up corner proxy; bottom-center pivot.</td><td><code>190, 600, 190</code> cm at a connected corner.</td></tr>
+        <tr><td>City gate-end tower</td><td><code>wall_city_tower_end</code></td><td>One-unit Y-up tower; bottom-center pivot.</td><td><code>190, 600, 190</code> cm at a gate endpoint.</td></tr>
+        <tr><td>Castle gate-end tower</td><td><code>wall_castle_tower_end</code></td><td>One-unit Y-up tower; bottom-center pivot.</td><td><code>190, 600, 190</code> cm at a gate endpoint.</td></tr>
+        <tr><td>Primary road</td><td><code>road_primary</code></td><td>Box Size <code>1, 1, 1</code>; Center <code>0, -0.5, 0</code>; +X follows road.</td><td><code>segment_length, 15, 200</code> cm.</td></tr>
+        <tr><td>Internal road</td><td><code>road_internal</code></td><td>Box Size <code>1, 1, 1</code>; Center <code>0, -0.5, 0</code>; +X follows road.</td><td><code>segment_length, 10, 80</code> cm.</td></tr>
+        <tr><td>River</td><td><code>river</code></td><td>Grid Size <code>1 × 1</code> in XZ at Y=0; +X follows flow.</td><td><code>segment_length</code> × <code>segment_width</code> cm on XZ.</td></tr>
       </tbody>
     </table>
   </div>
-  <p class="note">Names must match exactly, including underscores and lowercase letters. A mismatched name produces a point with no copied source piece.</p>
+  <p class="note">Names must match exactly, including underscores and lowercase letters. The result values above are Houdini X/Y/Z after the importer has multiplied the CSV metres by 100. A mismatched name produces a point with no copied source piece.</p>
 
   <h3>Build the named source library</h3>
   <ol>

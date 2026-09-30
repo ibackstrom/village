@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Village Glade — design research</title>
+  <style>
+    :root { color-scheme: light; --paper: #f2e7c8; --ink: #493b31; --accent: #a9553e; --green: #65784e; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #b7be91; color: var(--ink); font: 17px/1.65 Georgia, serif; }
+    main { width: min(920px, calc(100% - 32px)); margin: 32px auto; padding: clamp(24px, 6vw, 64px); background: var(--paper); box-shadow: 0 24px 70px rgba(52,45,33,.22); border-radius: 18px; }
+    h1, h2, h3 { line-height: 1.15; font-weight: normal; }
+    h1 { margin: 0; font-size: clamp(36px, 7vw, 66px); }
+    h2 { margin-top: 2.2em; padding-top: .4em; border-top: 1px solid rgba(73,59,49,.2); font-size: 30px; }
+    h3 { margin-bottom: .3em; color: var(--green); }
+    p, li { max-width: 74ch; }
+    a { color: var(--accent); }
+    .lede { font-size: 20px; color: rgba(73,59,49,.8); }
+    .note { padding: 14px 17px; background: rgba(255,255,255,.42); border-left: 4px solid var(--accent); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+    .card { padding: 16px; border: 1px solid rgba(73,59,49,.18); border-radius: 12px; background: rgba(255,255,255,.24); }
+    .card h3 { margin-top: 0; }
+    code { font: .9em ui-monospace, monospace; background: rgba(73,59,49,.08); padding: .1em .3em; border-radius: 4px; }
+    footer { margin-top: 48px; font-size: 14px; opacity: .72; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Village Glade</h1>
+  <p class="lede">Research notes and an implementation plan for a warmer, more interesting, and more reliable edition of the village generator.</p>
+
+  <p class="note"><strong>Creative boundary:</strong> this is an original interpretation of broad cozy-diorama and procedural-layout principles. It does not copy Tiny Glade assets, code, interface, trademarks, or proprietary building systems. Tiny Glade is used only as a public design reference.</p>
+
+  <h2>What the strongest references agree on</h2>
+  <div class="grid">
+    <section class="card">
+      <h3>Relationships beat decoration</h3>
+      <p>The memorable effect is not simply pastel color. Elements react to context: a path meets a door, a raised volume gets supports, and nearby parts visually belong together. In this generator, roads define blocks first; fixed-size buildings are then oriented and fitted inside those blocks.</p>
+    </section>
+    <section class="card">
+      <h3>Every rule is curated</h3>
+      <p>Pounce Light describes procedural art as many hand-authored rules, with a different pipeline for each element—not one magic algorithm. This supports retaining specialized generators for roads, walls, buildings, water, and vegetation.</p>
+    </section>
+    <section class="card">
+      <h3>A scene should suggest stories</h3>
+      <p>Landmarks, bridges, courtyards, clustered homes, rivers, trees, and changing moods create useful narrative prompts. Quantity alone does not. A compact village with readable neighborhoods is stronger than undifferentiated density.</p>
+    </section>
+    <section class="card">
+      <h3>Flow is a feature</h3>
+      <p>Fast response and forgiving controls protect the cozy feeling. Procedural glitches, overlaps, and surprising state changes interrupt it. Deterministic seeds, fixed proxy footprints, an unchanged fallback version, and browser-native downloads therefore matter as much as style.</p>
+    </section>
+  </div>
+
+  <h2>What this edition implements</h2>
+  <ul>
+    <li><strong>A small composed village:</strong> walls, castle, church, market, internal roads, river, blocks, and greenery are enabled by default.</li>
+    <li><strong>Fixed production geometry:</strong> ordinary buildings still use the eight exact footprints documented for Houdini and Unreal. The visual treatment does not alter exported scale.</li>
+    <li><strong>Readable blocks:</strong> faint block boundaries preserve the relationship between street network and building clusters.</li>
+    <li><strong>Cozy elevation cues:</strong> raised walls, outlined gable roofs, warm roof variation, district tinting, tree clusters, soft contrast, paper grain, and edge vignette add a diorama-like hierarchy without pretending to be 3D.</li>
+    <li><strong>Three authored moods:</strong> Meadow, Harvest, and Twilight change a controlled palette rather than randomizing every color.</li>
+    <li><strong>Calmer controls:</strong> the small overlay offers only mood, new seed, quiet view, original version, and ZIP. Detailed generation controls remain in the map's existing Menu/Warp workflow.</li>
+    <li><strong>Stable interchange:</strong> CSV export, names, rotations, wall roles, roads, river points, and Houdini/Unreal compatibility are inherited from the stable build.</li>
+    <li><strong>Isolation and fallback:</strong> this edition has its own saved-settings namespace and lives under <code>glade/</code>; it cannot overwrite the stable generator's local preferences.</li>
+  </ul>
+
+  <h2>Reliability decisions</h2>
+  <ul>
+    <li>The existing road-and-block topology remains the source of truth. Style changes do not introduce a second geometry system that could drift away from CSV.</li>
+    <li>Buildings are accepted only when a complete standard footprint fits inside its generated lot. This guards against the most visible boundary intersections.</li>
+    <li>The building amount is bounded, and village topology scales with it instead of filling arbitrary points.</li>
+    <li>Landmarks remain specialized geometry and are exported under explicit names.</li>
+    <li>Downloads use a real temporary anchor and object URL, including a UTF-8 BOM for CSV compatibility in Windows tools.</li>
+    <li>The original generator is preserved unchanged as the production fallback.</li>
+  </ul>
+
+  <h2>Highest-value next steps</h2>
+  <ol>
+    <li><strong>Adjacency grammar:</strong> classify each building edge as street, neighbor, courtyard, wall, or water. Use that classification to reserve doors on streets, shared walls between side-by-side houses, and gardens in rear setbacks.</li>
+    <li><strong>Block occupancy solver:</strong> pack standard modules along street fronts using intervals, then validate every footprint and clearance with a spatial index. This would make terraces intentional instead of accidental.</li>
+    <li><strong>Road conflict pass:</strong> classify crossings, T-junctions, gates, and bridges; remove tiny road stubs and merge near-collinear segments before export.</li>
+    <li><strong>Wall chemistry:</strong> derive straight, turn, gate, tower-end, and bridge interfaces from neighboring segments, with modular lengths matched to the Houdini kit.</li>
+    <li><strong>Story details as data:</strong> export optional points for wells, carts, gardens, trees, benches, lamps, and washing lines, each constrained by clearance and neighborhood type.</li>
+    <li><strong>Reproducible validation:</strong> batch-generate hundreds of seeds and reject footprints crossing roads, water, walls, or other buildings. Keep screenshots for the worst layouts rather than testing only attractive seeds.</li>
+  </ol>
+
+  <h2>Sources and how they informed the work</h2>
+  <ul>
+    <li><a href="https://store.steampowered.com/app/2198150/Tiny_Glade/">Tiny Glade official Steam page</a> — gridless “building chemistry,” procedural detail, no failure states, and an alive diorama atmosphere.</li>
+    <li><a href="https://80.lv/articles/exclusive-tiny-glade-developers-discuss-bevy-proceduralism-publishers-cozy-games">Pounce Light interview, 80 Level</a> — hand-curated procedural rules, specialized generators, iterative UX testing, story-enabling tools, and the importance of preventing glitches from breaking creative flow.</li>
+    <li><a href="https://www.digitalfoundry.net/articles/digitalfoundry-2024-tiny-glade-proves-the-power-of-bespoke-game-engines-and-graphics-tech">Digital Foundry technical analysis</a> — warm cohesive lighting, low-complexity proxy geometry, fast feedback, procedural micro-detail, water highlights, and diorama depth cues.</li>
+    <li><a href="https://cgl.ethz.ch/Downloads/Publications/Papers/2001/p_Par01.pdf">Parish &amp; Müller, Procedural Modeling of Cities</a> — road networks and population/environment constraints as an organizing layer.</li>
+    <li><a href="https://www.citygen.net/files/citygen_gdtw07.pdf">Citygen</a> — hierarchical road generation, lots, and building placement as separate but connected stages.</li>
+    <li><a href="https://www.tmwhere.com/city_generation.html">City generation notes by Martin Devans</a> — practical interpretation of road, block, and lot subdivision.</li>
+    <li><a href="https://watabou.github.io/">Watabou / Procgen Arcana</a> — the original city topology, map renderer, and interaction foundation used by this experimental derivative.</li>
+  </ul>
+
+  <p>The architectural references supplied with the project were also reviewed as inspiration for an eventual offline Houdini detail pass. They are not treated as implementation specifications for this browser build.</p>
+
+  <footer>Village Glade experimental edition. Research snapshot prepared September 2026. See <a href="LICENSE-NOTICE.txt">LICENSE-NOTICE.txt</a> before redistribution.</footer>
+</main>
+</body>
+</html>

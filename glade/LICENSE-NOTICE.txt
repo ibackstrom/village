@@ -1,0 +1,40 @@
+VILLAGE GLADE EXPERIMENTAL EDITION — LICENSE AND USE NOTICE
+
+This package is an unofficial modified snapshot of Watabou's Medieval Fantasy
+City Generator. It is not affiliated with or endorsed by Watabou or Pounce
+Light. "Tiny Glade" is a trademark/title associated with Pounce Light; no Tiny
+Glade code or assets are included in this package.
+
+GENERATED OUTPUTS
+
+Watabou's published Procgen Arcana FAQ and the Medieval Fantasy City Generator
+page state that generated maps may be copied, modified, and used in commercial
+projects. Attribution is appreciated but not required. The exported CSV layout
+data is reasonably treated as generator output, although the FAQ does not name
+CSV specifically.
+
+Sources:
+https://watabou.github.io/faq.html
+https://watabou.itch.io/medieval-fantasy-city-generator
+
+GENERATOR APPLICATION AND CODE
+
+The older public TownGeneratorOS source repository is GPLv3 licensed:
+https://github.com/watabou/TownGeneratorOS
+https://github.com/watabou/TownGeneratorOS/blob/master/LICENSE
+
+However, that repository describes an older version, while this package is
+derived from a newer hosted web build. The downloaded hosted files do not
+contain a clear license applying to that whole newer build. Do not assume the
+older repository's GPLv3 license automatically grants redistribution rights for
+every newer hosted file.
+
+PRACTICAL CONCLUSION
+
+* Commercial use of maps generated with the tool is explicitly permitted by
+  Watabou's published output terms.
+* For internal experimentation and evaluation, keep this notice with the ZIP.
+* Before commercially redistributing, selling, sublicensing, or embedding this
+  modified generator application itself, obtain Watabou's written permission
+  and/or have qualified counsel review the exact files and applicable license.
+* This notice is a source-based practical summary, not legal advice.

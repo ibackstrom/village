@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta id="viewport" name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#80965f">
+  <title>Village Glade — experimental edition</title>
+  <link rel="shortcut icon" type="image/png" href="./favicon.png">
+  <script>
+    (function setDefaults() {
+      var url = new URL(window.location.href);
+      var defaults = {
+        size: "12", walls: "1", citadel: "1", plaza: "1", temple: "1",
+        coast: "0", river: "1", greens: "1", style: "default"
+      };
+      Object.keys(defaults).forEach(function (key) {
+        if (!url.searchParams.has(key)) url.searchParams.set(key, defaults[key]);
+      });
+      window.history.replaceState(null, "", url);
+    }());
+  </script>
+  <script src="./mfcg.js?v=1"></script>
+  <style>
+    :root {
+      --ink: #493b31;
+      --panel: rgba(247, 237, 207, .88);
+      --line: rgba(73, 59, 49, .25);
+      --accent: #a9553e;
+    }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #b7be91; }
+    body { color: var(--ink); font: 14px/1.35 "Share Tech Regular", system-ui, sans-serif; }
+    #openfl-content { position: absolute; inset: 0; width: 100%; height: 100%; background: #b7be91; }
+    #openfl-content canvas { filter: saturate(1.08) contrast(.98) drop-shadow(0 18px 30px rgba(57, 51, 37, .12)); }
+    .atmosphere, .vignette { position: fixed; inset: 0; pointer-events: none; z-index: 3; }
+    .atmosphere {
+      opacity: .2;
+      background-image:
+        radial-gradient(circle at 15% 23%, rgba(255,255,255,.7) 0 1px, transparent 1.5px),
+        radial-gradient(circle at 78% 62%, rgba(79,67,43,.45) 0 .7px, transparent 1.3px);
+      background-size: 17px 19px, 23px 29px;
+      mix-blend-mode: soft-light;
+    }
+    .vignette { box-shadow: inset 0 0 120px rgba(67, 57, 40, .2); }
+    .studio {
+      position: fixed; z-index: 10; top: 18px; left: 18px; width: min(286px, calc(100vw - 92px));
+      padding: 14px; border: 1px solid var(--line); border-radius: 14px;
+      background: var(--panel); box-shadow: 0 12px 30px rgba(58, 48, 35, .16);
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    }
+    .studio[hidden] { display: none; }
+    .studio h1 { margin: 0; font: 26px/1 "IM FELL Great Primer Roman", Georgia, serif; font-weight: normal; }
+    .studio p { margin: 7px 0 11px; color: rgba(73,59,49,.78); }
+    .moods, .actions { display: flex; flex-wrap: wrap; gap: 6px; }
+    button, .button {
+      appearance: none; border: 1px solid var(--line); border-radius: 999px; padding: 7px 10px;
+      background: rgba(255,250,231,.72); color: inherit; font: inherit; text-decoration: none; cursor: pointer;
+    }
+    button:hover, .button:hover, button:focus-visible, .button:focus-visible { background: #fff8df; border-color: var(--accent); outline: none; }
+    .moods button[aria-pressed="true"] { color: #fff9e8; background: var(--accent); border-color: var(--accent); }
+    .actions { margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--line); }
+    .quiet { position: fixed; z-index: 11; top: 18px; left: 18px; display: none; }
+    .quiet.visible { display: block; }
+    .loading, .error {
+      position: fixed; z-index: 20; left: 50%; top: 50%; transform: translate(-50%, -50%);
+      padding: 14px 18px; border-radius: 12px; background: #f4e8c8; border: 1px solid var(--line);
+      box-shadow: 0 16px 40px rgba(42,37,29,.2); text-align: center;
+    }
+    .loading.ready { opacity: 0; pointer-events: none; transition: opacity .35s ease; }
+    .error { display: none; max-width: 420px; }
+    .error.visible { display: block; }
+    @media (max-width: 620px) {
+      .studio { top: 10px; left: 10px; width: min(270px, calc(100vw - 78px)); padding: 11px; }
+      .studio h1 { font-size: 22px; }
+      .studio p { display: none; }
+      .quiet { top: 10px; left: 10px; }
+      .vignette { box-shadow: inset 0 0 55px rgba(67,57,40,.14); }
+    }
+    @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+    @font-face { font-family: "IM FELL Great Primer Roman"; src: url("Assets/IMFellGreatPrimer-Regular.woff") format("woff"); }
+    @font-face { font-family: "Share Tech Regular"; src: url("Assets/ShareTech-Regular.woff") format("woff"); }
+    @font-face { font-family: "Share Tech Mono"; src: url("Assets/ShareTechMono-Regular.woff") format("woff"); }
+  </style>
+</head>
+<body>
+  <noscript>This webpage requires JavaScript.</noscript>
+  <div id="openfl-content"></div>
+  <div class="atmosphere"></div>
+  <div class="vignette"></div>
+
+  <aside class="studio" id="studio" aria-label="Glade controls">
+    <h1>Village Glade</h1>
+    <p>An experimental storybook rendering. The original generator remains available unchanged.</p>
+    <div class="moods" aria-label="Atmosphere">
+      <button type="button" data-style="default">Meadow</button>
+      <button type="button" data-style="natural">Harvest</button>
+      <button type="button" data-style="modern">Twilight</button>
+    </div>
+    <div class="actions">
+      <button type="button" id="new-seed">New glade</button>
+      <button type="button" id="hide-studio">Quiet view</button>
+      <a class="button" href="../">Original</a>
+      <a class="button" href="../village-glade-edition.zip" download>ZIP</a>
+    </div>
+  </aside>
+  <button class="quiet" id="show-studio" type="button">Show controls</button>
+  <div class="loading" id="loading">Growing the glade…</div>
+  <div class="error" id="error" role="alert">
+    <strong>The glade could not be rendered.</strong><br>
+    Your current URL and seed are safe. Reload the page or return to the original version.<br><br>
+    <button type="button" onclick="location.reload()">Reload</button>
+    <a class="button" href="../">Open original</a>
+  </div>
+
+  <script>
+    window.saveAs = function (blob, fileName) {
+      if (/^text\/csv/i.test(blob.type)) blob = new Blob(["\ufeff", blob], { type: "text/csv;charset=utf-8" });
+      if (navigator.msSaveOrOpenBlob) return navigator.msSaveOrOpenBlob(blob, fileName);
+      var urlApi = window.URL || window.webkitURL;
+      var url = urlApi.createObjectURL(blob);
+      var link = document.createElement("a");
+      link.href = url; link.download = fileName; link.hidden = true;
+      document.body.appendChild(link); link.click(); link.remove();
+      window.setTimeout(function () { urlApi.revokeObjectURL(url); }, 60000);
+    };
+
+    function updateQuery(values) {
+      var url = new URL(window.location.href);
+      Object.keys(values).forEach(function (key) { url.searchParams.set(key, values[key]); });
+      window.location.href = url.toString();
+    }
+
+    var currentStyle = new URL(window.location.href).searchParams.get("style") || "default";
+    document.querySelectorAll("[data-style]").forEach(function (button) {
+      button.setAttribute("aria-pressed", String(button.dataset.style === currentStyle));
+      button.addEventListener("click", function () { updateQuery({ style: button.dataset.style }); });
+    });
+    document.getElementById("new-seed").addEventListener("click", function () {
+      updateQuery({ seed: String(Math.floor(Math.random() * 2147483646) + 1) });
+    });
+    document.getElementById("hide-studio").addEventListener("click", function () {
+      document.getElementById("studio").hidden = true;
+      document.getElementById("show-studio").classList.add("visible");
+    });
+    document.getElementById("show-studio").addEventListener("click", function () {
+      document.getElementById("studio").hidden = false;
+      document.getElementById("show-studio").classList.remove("visible");
+    });
+
+    window.addEventListener("touchmove", function (event) { event.preventDefault(); }, { passive: false });
+    window.addEventListener("error", function () { document.getElementById("error").classList.add("visible"); });
+    window.addEventListener("unhandledrejection", function () { document.getElementById("error").classList.add("visible"); });
+
+    lime.embed("mfcg", "openfl-content", 0, 0, { parameters: {} });
+    var readyCheck = window.setInterval(function () {
+      if (document.querySelector("#openfl-content canvas")) {
+        document.getElementById("loading").classList.add("ready");
+        window.clearInterval(readyCheck);
+      }
+    }, 100);
+    window.setTimeout(function () {
+      if (!document.querySelector("#openfl-content canvas")) document.getElementById("error").classList.add("visible");
+    }, 12000);
+  </script>
+</body>
+</html>
